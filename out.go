@@ -43,7 +43,7 @@ func track(s string, startTime time.Time) {
 //export FLBPluginFlushCtx
 func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int {
 
-	defer track(runningtime("Flush"))
+	//defer track(runningtime("Flush"))
 	// Type assert context back into the original type for the Go variable
 	//id := output.FLBPluginGetContext(ctx).(string)
 	//log.Printf("[gostackdriver] Flush called for id: %s", id)
@@ -68,6 +68,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 
 		count++
 	}
+	fmt.Printf("[gostackdriver] Entries: %d\n", count)
 
 	return output.FLB_OK
 }

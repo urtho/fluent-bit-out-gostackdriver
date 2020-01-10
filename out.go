@@ -22,7 +22,7 @@ func FLBPluginInit(plugin unsafe.Pointer) int {
 	// Set the context to point to any Go variable
 	output.FLBPluginSetContext(plugin, id)
 
-	return output.FLB_OK
+ 	return output.FLB_OK
 }
 
 //export FLBPluginFlush
@@ -32,7 +32,6 @@ func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
 }
 
 func runningtime(s string) (string, time.Time) {
-    log.Println("Start:	", s)
     return s, time.Now()
 }
 
@@ -46,27 +45,26 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 
 	defer track(runningtime("Flush"))
 	// Type assert context back into the original type for the Go variable
-	id := output.FLBPluginGetContext(ctx).(string)
-	log.Printf("[gostackdriver] Flush called for id: %s", id)
+	//id := output.FLBPluginGetContext(ctx).(string)
+	//log.Printf("[gostackdriver] Flush called for id: %s", id)
 
 	dec := NewDecoder(data, int(length))
 
 	count := 0
 	for {
-		ret, rec := GetRecord(dec)
-		if ret != 0 {
+		rec := GetRecord(dec)
+		if rec == nil {
 			break
 		}
 
 		// Print record keys and values
-		timestamp := rec.ts
-		fmt.Printf("[%03d] Tag:%s TS:%s", count, C.GoString(tag), timestamp.String())
+		//fmt.Printf("[%03d] Tag:%s TS:%s", count, C.GoString(tag), rec.ts.String())
 
-		j, err := json.Marshal(rec.kv)
+		_, err := json.Marshal(rec.kv)
 		if err != nil {
 			fmt.Println("Cannot marshal JSON:", err)
 		}
-		fmt.Printf(" %s\n", j)
+		//fmt.Printf(" %s\n", j)
 
 		count++
 	}

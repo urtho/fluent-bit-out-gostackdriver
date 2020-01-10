@@ -9,8 +9,8 @@ COPY / /root/
 
 RUN go build \
     -buildmode=c-shared \
-    -o /out_gostackdriver.so 
-#    github.com/urtho/fluent-bit-out-gostackdriver
+    -o /out_gostackdriver.so \
+    github.com/urtho/fluent-bit-out-gostackdriver
 
 FROM fluent/fluent-bit:1.3
 

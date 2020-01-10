@@ -12,11 +12,12 @@ RUN go build \
     -o /out_gostackdriver.so \
     github.com/urtho/fluent-bit-out-gostackdriver
 
-FROM fluent/fluent-bit:1.3
+FROM fluent/fluent-bit:1.3.5
 
 COPY --from=gobuilder /out_gostackdriver.so /fluent-bit/bin/
-COPY --from=gobuilder /root/fluent-bit.conf /fluent-bit/etc/
+COPY --from=gobuilder /root/test/fluent-bit.conf /fluent-bit/etc/
 COPY --from=gobuilder /root/plugins.conf /fluent-bit/etc/
+COPY --from=gobuilder /root/test/runtime/* /
 
 EXPOSE 2020
 

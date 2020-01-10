@@ -10,11 +10,14 @@ import (
 	"github.com/fluent/fluent-bit-go/output"
 )
 
-//export FLBPluginRegister
+// FLBPluginRegister is fired upon plugin initialization
+//export FLBPluginRegister 
 func FLBPluginRegister(def unsafe.Pointer) int {
-	return output.FLBPluginRegister(def, "gostackdriver", "Testing multiple instances.")
+	return output.FLBPluginRegister(def, "gostackdriver", "Starckdriver output plugin.")
+	//TODO: fetch GCP/GKE metadate
 }
 
+// FLBPluginInit is fired for every [OUTPUT] instance with plugin config handle
 //export FLBPluginInit
 func FLBPluginInit(plugin unsafe.Pointer) int {
 	id := output.FLBPluginConfigKey(plugin, "id")
@@ -25,6 +28,7 @@ func FLBPluginInit(plugin unsafe.Pointer) int {
  	return output.FLB_OK
 }
 
+// FLBPluginFlush is called only for uninitialized instances
 //export FLBPluginFlush
 func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
 	log.Print("[gostackdriver] Flush called for unknown instance")
@@ -40,6 +44,9 @@ func track(s string, startTime time.Time) {
     log.Println("End:	", s, "took", endTime.Sub(startTime))
 }
 
+
+// FLBPluginFlushCtx is called for a set of buffered entiries from the same INPUT
+// Can contain more entries then Stackdriver can support in a single batch
 //export FLBPluginFlushCtx
 func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int {
 
@@ -73,6 +80,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 	return output.FLB_OK
 }
 
+// FLBPluginExit is called for plugin teardown
 //export FLBPluginExit
 func FLBPluginExit() int {
 	return output.FLB_OK

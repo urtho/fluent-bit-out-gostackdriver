@@ -15,8 +15,6 @@ RUN go build \
 FROM fluent/fluent-bit:1.3.5
 
 COPY --from=gobuilder /out_gostackdriver.so /fluent-bit/bin/
-#COPY --from=gobuilder /root/fluent-bit.conf /fluent-bit/etc/
-COPY --from=gobuilder /root/plugins.conf /fluent-bit/etc/
 
 EXPOSE 2020
 

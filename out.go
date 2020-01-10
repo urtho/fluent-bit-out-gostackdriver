@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"log"
 	"unsafe"
-
+	"time"	
+	json "github.com/json-iterator/go"
 	"github.com/fluent/fluent-bit-go/output"
 )
 
@@ -30,29 +31,43 @@ func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
 	return output.FLB_OK
 }
 
+func runningtime(s string) (string, time.Time) {
+    log.Println("Start:	", s)
+    return s, time.Now()
+}
+
+func track(s string, startTime time.Time) {
+    endTime := time.Now()
+    log.Println("End:	", s, "took", endTime.Sub(startTime))
+}
+
 //export FLBPluginFlushCtx
 func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int {
+
+	defer track(runningtime("Flush"))
 	// Type assert context back into the original type for the Go variable
 	id := output.FLBPluginGetContext(ctx).(string)
 	log.Printf("[gostackdriver] Flush called for id: %s", id)
 
-	dec := output.NewDecoder(data, int(length))
+	dec := NewDecoder(data, int(length))
 
 	count := 0
 	for {
-		ret, ts, record := output.GetRecord(dec)
+		ret, rec := GetRecord(dec)
 		if ret != 0 {
 			break
 		}
 
 		// Print record keys and values
-		timestamp := ts.(output.FLBTime)
-		fmt.Printf("[%d] %s: [%s, {", count, C.GoString(tag), timestamp.String())
+		timestamp := rec.ts
+		fmt.Printf("[%03d] Tag:%s TS:%s", count, C.GoString(tag), timestamp.String())
 
-		for k, v := range record {
-			fmt.Printf("\"%s\": %v, ", k, v)
+		j, err := json.Marshal(rec.kv)
+		if err != nil {
+			fmt.Println("Cannot marshal JSON:", err)
 		}
-		fmt.Printf("}\n")
+		fmt.Printf(" %s\n", j)
+
 		count++
 	}
 

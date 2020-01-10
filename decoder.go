@@ -66,6 +66,7 @@ func NewDecoder(data unsafe.Pointer, length int) (*FLBDecoder) {
 	dec.handle = new(codec.MsgpackHandle)
 	dec.handle.MapType = reflect.TypeOf(map[string]interface{}(nil))
 	dec.handle.SetExt(reflect.TypeOf(FLBTime{}), 0, &FLBTime{})
+	dec.handle.RawToString = true
 
 	b = C.GoBytes(data, C.int(length))
 	dec.mpdec = codec.NewDecoderBytes(b, dec.handle)

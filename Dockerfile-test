@@ -15,11 +15,10 @@ RUN go build \
 FROM fluent/fluent-bit:1.3.5
 
 COPY --from=gobuilder /out_gostackdriver.so /fluent-bit/bin/
-COPY --from=gobuilder /root/test/fluent-bit.conf /fluent-bit/etc/
-COPY --from=gobuilder /root/plugins.conf /fluent-bit/etc/
-COPY --from=gobuilder /root/test/runtime/* /
+COPY --from=gobuilder /root/etc/*.conf /fluent-bit/etc/
+COPY --from=gobuilder /root/test/runtime/ /
 
 EXPOSE 2020
 
-# CMD ["/fluent-bit/bin/fluent-bit", "--plugin", "/fluent-bit/bin/out_gostackdriver.so", "--config", "/fluent-bit/etc/fluent-bit.conf"]¬
-CMD ["/fluent-bit/bin/fluent-bit", "--config", "/fluent-bit/etc/fluent-bit.conf"]¬
+# CMD ["/fluent-bit/bin/fluent-bit", "--plugin", "/fluent-bit/bin/out_gostackdriver.so", "--config", "/fluent-bit/etc/fluent-bit.conf"]
+CMD ["/fluent-bit/bin/fluent-bit", "--config", "/fluent-bit/etc/fluent-bit.conf"]

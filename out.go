@@ -76,11 +76,14 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 		}
 		fmt.Printf(" %s\n", j)
 
+		//TODO - batch by 1000 entries max!
 		count++
 	}
 	fmt.Printf("[gostackdriver] Entries: %d\n", count)
 
-	//FLB_RETRY 
+	//TODO - Do SYNC logging , return FLB_RETRY if error
+	//This plugin should not ack uncommited entries
+	//An error on batch no >#1 will result in duplicate entries when FLB retries :(
 	return output.FLB_OK
 }
 

@@ -1,21 +1,17 @@
 package main
 
 import (
-//	"bytes"
-//	"context"
-//	"encoding/json"
-//	"errors"
-//	"fmt"
-//	"log"
-//	"net/http"
-//	"os"
-	"strings"
-	"sync"
-
+	"encoding/json"
+	"fmt"
 	"cloud.google.com/go/compute/metadata"
+	"github.com/golang/protobuf/ptypes"
+	structpb "github.com/golang/protobuf/ptypes/struct"
 	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
 	logtypepb "google.golang.org/genproto/googleapis/logging/type"
-	sdlog "cloud.google.com/go/logging"
+	logpb "google.golang.org/genproto/googleapis/logging/v2"
+	"strings"
+	"sync"
+	"time"
 )
 
 var enumSeverityMap = map[string]logtypepb.LogSeverity{
@@ -50,7 +46,7 @@ var enumSeverityMap = map[string]logtypepb.LogSeverity{
 	"DEFAULT":   logtypepb.LogSeverity_DEFAULT,
 }
 
-//mapSeverity Map severities in the wild to an integer value 
+//mapSeverity Map severities in the wild to an integer value
 func mapSeverity(sev string) logtypepb.LogSeverity {
 	if sl, e := enumSeverityMap[strings.ToUpper(sev)]; e {
 		return sl
@@ -98,24 +94,99 @@ func detectResource() *mrpb.MonitoredResource {
 	return detectedResource.pb
 }
 
-func newEntry(rec *FLBRecord) *sdlog.Entry {
-	var k8smap map[string]interface{} 
+// toProtoStruct converts v, which must marshal into a JSON object,
+// into a Google Struct proto.
+func toProtoStruct(v interface{}) (*structpb.Struct, error) {
+	// Fast path: if v is already a *structpb.Struct, nothing to do.
+	if s, ok := v.(*structpb.Struct); ok {
+		return s, nil
+	}
+	// v is a Go value that supports JSON marshalling. We want a Struct
+	// protobuf. Some day we may have a more direct way to get there, but right
+	// now the only way is to marshal the Go value to JSON, unmarshal into a
+	// map, and then build the Struct proto from the map.
+	var jb []byte
+	var err error
+	if raw, ok := v.(json.RawMessage); ok { // needed for Go 1.7 and below
+		jb = []byte(raw)
+	} else {
+		jb, err = json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("logging: json.Marshal: %v", err)
+		}
+	}
+	var m map[string]interface{}
+	err = json.Unmarshal(jb, &m)
+	if err != nil {
+		return nil, fmt.Errorf("logging: json.Unmarshal: %v", err)
+	}
+	return jsonMapToProtoStruct(m), nil
+}
+
+func jsonMapToProtoStruct(m map[string]interface{}) *structpb.Struct {
+	fields := map[string]*structpb.Value{}
+	for k, v := range m {
+		fields[k] = jsonValueToStructValue(v)
+	}
+	return &structpb.Struct{Fields: fields}
+}
+
+func jsonValueToStructValue(v interface{}) *structpb.Value {
+	switch x := v.(type) {
+	case bool:
+		return &structpb.Value{Kind: &structpb.Value_BoolValue{BoolValue: x}}
+	case float64:
+		return &structpb.Value{Kind: &structpb.Value_NumberValue{NumberValue: x}}
+	case string:
+		return &structpb.Value{Kind: &structpb.Value_StringValue{StringValue: x}}
+	case nil:
+		return &structpb.Value{Kind: &structpb.Value_NullValue{}}
+	case map[string]interface{}:
+		return &structpb.Value{Kind: &structpb.Value_StructValue{StructValue: jsonMapToProtoStruct(x)}}
+	case []interface{}:
+		var vals []*structpb.Value
+		for _, e := range x {
+			vals = append(vals, jsonValueToStructValue(e))
+		}
+		return &structpb.Value{Kind: &structpb.Value_ListValue{ListValue: &structpb.ListValue{Values: vals}}}
+	default:
+		panic(fmt.Sprintf("bad type %T for JSON value", v))
+	}
+}
+
+func newEntry(rec *FLBRecord) *logpb.LogEntry {
+	var k8smap map[string]interface{}
 	if k8s, e := rec.kv["kubernetes"]; e {
 		if k8sm, ok := k8s.(map[string]interface{}); ok {
 			k8smap = k8sm
-			delete(rec.kv,"kubernetes")
+			delete(rec.kv, "kubernetes")
+		}
+	}
+	ts, err := ptypes.TimestampProto(rec.ts.Time)
+	if err != nil {
+		ts, err = ptypes.TimestampProto(time.Now())
+		if err != nil {
+			//The Time has ended
+			return nil
 		}
 	}
 	rec.cleanUp()
-	return &sdlog.Entry {
-		Timestamp : rec.ts.Time,
-		Severity : rec.parseSeverity(k8smap),
-		Trace: rec.popTrace(),
-		SpanID: rec.popSpanID(),
-		Labels: rec.popLabels(k8smap),
-		Resource: rec.popResource(k8smap),
-		LogName: rec.popLogName(),
-		Payload: rec.kv,
+
+	//FIXME: This sucks ... CPU!
+	s, err := toProtoStruct(rec.kv)
+	if err != nil {
+		return nil
+	}
+
+	return &logpb.LogEntry{
+		Timestamp: ts,
+		Severity:  rec.parseSeverity(k8smap),
+		Trace:     rec.popTrace(),
+		SpanId:    rec.popSpanID(),
+		Labels:    rec.popLabels(k8smap),
+		Resource:  rec.popResource(k8smap),
+		LogName:   rec.popLogName(),
+		Payload:   &logpb.LogEntry_JsonPayload{JsonPayload: s},
 	}
 }
 
@@ -140,60 +211,60 @@ func (r *FLBRecord) popLabels(k8sm map[string]interface{}) map[string]string {
 	}
 	if k8slbls, e := k8sm["labels"]; e {
 		if k8slblsm, ok := k8slbls.(map[string]interface{}); ok {
-			for k,v := range k8slblsm {
+			for k, v := range k8slblsm {
 				if vs, ok := v.(string); ok {
 					lbls["k8s-pod/"+k] = vs
 				}
-			}	
+			}
 		}
-		delete(k8sm,"labels")
+		delete(k8sm, "labels")
 	}
 	return lbls
 }
 
-//popResouce fills resource labels with detected metadata overwritten by fields from kubernetes 
+//popResouce fills resource labels with detected metadata overwritten by fields from kubernetes
 func (r *FLBRecord) popResource(k8sm map[string]interface{}) *mrpb.MonitoredResource {
 	dr := detectResource()
-	if (k8sm == nil) {
+	if k8sm == nil {
 		return dr
 	}
 	var ndr mrpb.MonitoredResource
 	ndr.Type = "k8s_container"
 	ndr.Labels = make(map[string]string)
-	for k,v := range dr.Labels {
+	for k, v := range dr.Labels {
 		ndr.Labels[k] = v
-	}	
-	for k,v := range k8sm {
+	}
+	for k, v := range k8sm {
 		if vs, ok := v.(string); ok {
 			ndr.Labels[k] = vs
 		}
 	}
-	return &ndr	
+	return &ndr
 }
 
 //cleanUp deletes redudant information from payload
 func (r *FLBRecord) cleanUp() {
-	delete(r.kv,"log")
+	delete(r.kv, "log")
 	//FIXME
-//	delete(r.kv,"timestamp")
-//	delete(r.kv,"time")
-//	delete(r.kv,"stream")
+	//	delete(r.kv,"timestamp")
+	//	delete(r.kv,"time")
+	//	delete(r.kv,"stream")
 }
 
-func (r *FLBRecord) parseSeverity(k8sm map[string]interface{}) sdlog.Severity {
-	if sev,e := k8sm["severity"]; e {
+func (r *FLBRecord) parseSeverity(k8sm map[string]interface{}) logtypepb.LogSeverity {
+	if sev, e := k8sm["severity"]; e {
 		if ssev, ok := sev.(string); ok {
-			return sdlog.Severity(mapSeverity(ssev))
-		}		
-	}
-
-	if sev,e := r.kv["severity"]; e {
-		if ssev, ok := sev.(string); ok {
-			return sdlog.Severity (mapSeverity(ssev))
+			return mapSeverity(ssev)
 		}
 	}
-	delete(r.kv,"severity")
-	return sdlog.Severity (logtypepb.LogSeverity_DEFAULT)
+
+	if sev, e := r.kv["severity"]; e {
+		if ssev, ok := sev.(string); ok {
+			return mapSeverity(ssev)
+		}
+	}
+	delete(r.kv, "severity")
+	return logtypepb.LogSeverity_DEFAULT
 }
 
 func init() {

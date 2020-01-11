@@ -67,8 +67,10 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 
 		// Print record keys and values
 		fmt.Printf("[%03d] Tag:%s TS:%s", count, C.GoString(tag), rec.ts.String())
+		
+		sdent := newEntry(rec)
 
-		j, err := json.Marshal(rec.kv)
+		j, err := json.Marshal(sdent)
 		if err != nil {
 			fmt.Println("Cannot marshal JSON:", err)
 		}
@@ -78,6 +80,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 	}
 	fmt.Printf("[gostackdriver] Entries: %d\n", count)
 
+	//FLB_RETRY 
 	return output.FLB_OK
 }
 

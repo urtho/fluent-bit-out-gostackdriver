@@ -4,6 +4,7 @@ import (
 	"cloud.google.com/go/compute/metadata"
 	vkit "cloud.google.com/go/logging/apiv2"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/golang/protobuf/ptypes"
 	structpb "github.com/golang/protobuf/ptypes/struct"
@@ -19,15 +20,20 @@ import (
 
 const (
 	// ProdAddr is the production address.
-	ProdAddr   = "logging.googleapis.com:443"
+	ProdAddr = "logging.googleapis.com:443"
+	// WriteScope - use WriteScope only
 	WriteScope = "https://www.googleapis.com/auth/logging.write"
+	// EntriesMax flush up to 1000 entries at a time
 	EntriesMax = 1000
 )
 
 type sdClient struct {
-	client  *vkit.Client // client for the logging service
-	closed  bool
-	entries []*logpb.LogEntry
+	client   *vkit.Client // client for the logging service
+	closed   bool
+	entries  []*logpb.LogEntry
+	logName  string
+	resource *mrpb.MonitoredResource
+	labels   map[string]string
 }
 
 var enumSeverityMap = map[string]logtypepb.LogSeverity{
@@ -188,10 +194,17 @@ func (c *sdClient) appendEntry(rec *FLBRecord) error {
 	}
 	rec.cleanUp()
 
-	//FIXME: This sucks ... CPU!
+	//FIXME: This sucks ... up the CPU!
 	s, err := toProtoStruct(rec.kv)
 	if err != nil {
 		return nil
+	}
+	if c.labels == nil {
+		c.labels = rec.popLabels(k8smap)
+	}
+
+	if c.resource == nil {
+		c.resource = rec.popResource(k8smap)
 	}
 
 	c.entries = append(c.entries, &logpb.LogEntry{
@@ -199,9 +212,6 @@ func (c *sdClient) appendEntry(rec *FLBRecord) error {
 		Severity:  rec.parseSeverity(k8smap),
 		Trace:     rec.popTrace(),
 		SpanId:    rec.popSpanID(),
-		Labels:    rec.popLabels(k8smap),
-		Resource:  rec.popResource(k8smap),
-		LogName:   rec.popLogName(),
 		Payload:   &logpb.LogEntry_JsonPayload{JsonPayload: s},
 	})
 	if len(c.entries) >= EntriesMax {
@@ -210,9 +220,28 @@ func (c *sdClient) appendEntry(rec *FLBRecord) error {
 	return nil
 }
 
+func (c *sdClient) reset(tag string) error {
+	c.entries = c.entries[:0]
+	dr := detectResource()
+	projectID, ok := dr.Labels["project_id"]
+	if !ok {
+		return errors.New("project_id not detected")
+	}
+	c.logName = fmt.Sprintf("projects/%s/logs/%s", projectID, tag)
+	c.resource = nil
+	c.labels = nil
+	return nil
+}
+
 func (c *sdClient) flush() error {
+	if len(c.entries) == 0 {
+		return nil
+	}
 	_, err := c.client.WriteLogEntries(context.Background(), &logpb.WriteLogEntriesRequest{
-		Entries: c.entries,
+		LogName:  c.logName,
+		Resource: c.resource,
+		Labels:   c.labels,
+		Entries:  c.entries,
 	})
 	c.entries = c.entries[:0]
 	return err
@@ -223,10 +252,6 @@ func (r *FLBRecord) popTrace() string {
 	return ""
 }
 func (r *FLBRecord) popSpanID() string {
-	//FIXME
-	return ""
-}
-func (r *FLBRecord) popLogName() string {
 	//FIXME
 	return ""
 }
@@ -275,23 +300,24 @@ func (r *FLBRecord) cleanUp() {
 	delete(r.kv, "log")
 	//FIXME
 	//	delete(r.kv,"timestamp")
-	//	delete(r.kv,"time")
+	delete(r.kv, "time")
 	//	delete(r.kv,"stream")
 }
 
 func (r *FLBRecord) parseSeverity(k8sm map[string]interface{}) logtypepb.LogSeverity {
 	if sev, e := k8sm["severity"]; e {
 		if ssev, ok := sev.(string); ok {
+			delete(k8sm, "severity")
 			return mapSeverity(ssev)
 		}
 	}
 
 	if sev, e := r.kv["severity"]; e {
 		if ssev, ok := sev.(string); ok {
+			delete(r.kv, "severity")
 			return mapSeverity(ssev)
 		}
 	}
-	delete(r.kv, "severity")
 	return logtypepb.LogSeverity_DEFAULT
 }
 
@@ -322,7 +348,7 @@ func newSDClient(ctx context.Context, opts ...option.ClientOption) (*sdClient, e
 		return nil, err
 	}
 	//FIXME: this one is "not legal"
-	c.SetGoogleClientInfo("fbitgo","1")
+	c.SetGoogleClientInfo("fbitgo", "1")
 	return &sdClient{
 		client:  c,
 		closed:  false,
@@ -330,3 +356,27 @@ func newSDClient(ctx context.Context, opts ...option.ClientOption) (*sdClient, e
 	}, nil
 }
 
+func testSDClient() error {
+	c, e := newSDClient(context.Background())
+	if e != nil {
+		return e
+	}
+	ts, err := ptypes.TimestampProto(time.Unix(0, 0))
+	if err != nil {
+		return err
+	}
+	r := detectResource()
+	parent, ok := r.Labels["project_id"]
+	if !ok {
+		return errors.New("No project id detected")
+	}
+
+	c.entries = append(c.entries, &logpb.LogEntry{
+		LogName:   fmt.Sprintf("projects/%s/logs/ping", parent),
+		Resource:  r,
+		Payload:   &logpb.LogEntry_TextPayload{TextPayload: "ping"},
+		Timestamp: ts,     // Identical timestamps and insert IDs are both
+		InsertId:  "ping", // necessary for the service to dedup these entries.
+	})
+	return c.flush()
+}

@@ -38,33 +38,20 @@ func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
 	return output.FLB_OK
 }
 
-func runningtime(s string) (string, time.Time) {
-    return s, time.Now()
-}
-
-func track(s string, startTime time.Time) {
-    endTime := time.Now()
-    log.Println("End:	", s, "took", endTime.Sub(startTime))
-}
-
-
 // FLBPluginFlushCtx is called for a set of buffered entiries from the same INPUT
 // Can contain more entries then Stackdriver can support in a single batch
 //export FLBPluginFlushCtx
 func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int {
 
-	defer track(runningtime("Flush"))
+	startTime := time.Now()
 	
 	sdc, ok := output.FLBPluginGetContext(ctx).(*sdClient)
 	if !ok {
 		return output.FLB_ERROR
 	}
-	// Type assert context back into the original type for the Go variable
-	//id := output.FLBPluginGetContext(ctx).(string)
-	//log.Printf("[gostackdriver] Flush called for id: %s", id)
 
 	dec := NewDecoder(data, int(length))
-	//var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	sdc.reset(C.GoString(tag))
 
 	count := 0
 	for {
@@ -86,7 +73,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 		return output.FLB_RETRY
 	}
 
-	log.Printf("[gostackdriver] Entries: %d\n", count)
+	log.Printf("[gostackdriver] Entries: %d in %s\n", count, time.Now().Sub(startTime))
 
 	//TODO - Do SYNC logging , return FLB_RETRY if error
 	//This plugin should not ack uncommited entries
@@ -101,4 +88,6 @@ func FLBPluginExit() int {
 }
 
 func main() {
+	e := testSDClient()
+	log.Printf("testSDClient: %v\n", e)
 }

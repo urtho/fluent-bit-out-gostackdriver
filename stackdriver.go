@@ -1,11 +1,14 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"cloud.google.com/go/compute/metadata"
+	vkit "cloud.google.com/go/logging/apiv2"
+	"context"
+	"fmt"
 	"github.com/golang/protobuf/ptypes"
 	structpb "github.com/golang/protobuf/ptypes/struct"
+	json "github.com/json-iterator/go"
+	"google.golang.org/api/option"
 	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
 	logtypepb "google.golang.org/genproto/googleapis/logging/type"
 	logpb "google.golang.org/genproto/googleapis/logging/v2"
@@ -13,6 +16,19 @@ import (
 	"sync"
 	"time"
 )
+
+const (
+	// ProdAddr is the production address.
+	ProdAddr   = "logging.googleapis.com:443"
+	WriteScope = "https://www.googleapis.com/auth/logging.write"
+	EntriesMax = 1000
+)
+
+type sdClient struct {
+	client  *vkit.Client // client for the logging service
+	closed  bool
+	entries []*logpb.LogEntry
+}
 
 var enumSeverityMap = map[string]logtypepb.LogSeverity{
 	"EMERGENCY": logtypepb.LogSeverity_EMERGENCY,
@@ -154,7 +170,7 @@ func jsonValueToStructValue(v interface{}) *structpb.Value {
 	}
 }
 
-func newEntry(rec *FLBRecord) *logpb.LogEntry {
+func (c *sdClient) appendEntry(rec *FLBRecord) error {
 	var k8smap map[string]interface{}
 	if k8s, e := rec.kv["kubernetes"]; e {
 		if k8sm, ok := k8s.(map[string]interface{}); ok {
@@ -178,7 +194,7 @@ func newEntry(rec *FLBRecord) *logpb.LogEntry {
 		return nil
 	}
 
-	return &logpb.LogEntry{
+	c.entries = append(c.entries, &logpb.LogEntry{
 		Timestamp: ts,
 		Severity:  rec.parseSeverity(k8smap),
 		Trace:     rec.popTrace(),
@@ -187,7 +203,19 @@ func newEntry(rec *FLBRecord) *logpb.LogEntry {
 		Resource:  rec.popResource(k8smap),
 		LogName:   rec.popLogName(),
 		Payload:   &logpb.LogEntry_JsonPayload{JsonPayload: s},
+	})
+	if len(c.entries) >= EntriesMax {
+		return c.flush()
 	}
+	return nil
+}
+
+func (c *sdClient) flush() error {
+	_, err := c.client.WriteLogEntries(context.Background(), &logpb.WriteLogEntriesRequest{
+		Entries: c.entries,
+	})
+	c.entries = c.entries[:0]
+	return err
 }
 
 func (r *FLBRecord) popTrace() string {
@@ -270,3 +298,35 @@ func (r *FLBRecord) parseSeverity(k8sm map[string]interface{}) logtypepb.LogSeve
 func init() {
 	detectResource()
 }
+
+// close closes underlying client
+func (c *sdClient) close() error {
+	if c.closed {
+		return nil
+	}
+	c.flush()
+	err2 := c.client.Close()
+	c.closed = true
+	return err2
+}
+
+// newSDClient creates new sdClient
+func newSDClient(ctx context.Context, opts ...option.ClientOption) (*sdClient, error) {
+	opts = append([]option.ClientOption{
+		option.WithEndpoint(ProdAddr),
+		option.WithScopes(WriteScope),
+	}, opts...)
+
+	c, err := vkit.NewClient(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	//FIXME: this one is "not legal"
+	c.SetGoogleClientInfo("fbitgo","1")
+	return &sdClient{
+		client:  c,
+		closed:  false,
+		entries: make([]*logpb.LogEntry, 0, EntriesMax),
+	}, nil
+}
+

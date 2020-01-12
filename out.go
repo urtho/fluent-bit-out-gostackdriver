@@ -2,11 +2,10 @@ package main
 
 import (
 	"C"
-	"fmt"
 	"log"
 	"unsafe"
 	"time"	
-	json "github.com/json-iterator/go"
+	"context"
 	"github.com/fluent/fluent-bit-go/output"
 )
 
@@ -22,9 +21,13 @@ func FLBPluginRegister(def unsafe.Pointer) int {
 func FLBPluginInit(plugin unsafe.Pointer) int {
 	id := output.FLBPluginConfigKey(plugin, "id")
 	log.Printf("[gostackdriver] id = %q", id)
+	sdc, err := newSDClient(context.Background())
 	// Set the context to point to any Go variable
-	output.FLBPluginSetContext(plugin, id)
-
+	if err != nil {
+		log.Println("Error creating StackDriver client: ", err)
+		return output.FLB_ERROR
+	}
+	output.FLBPluginSetContext(plugin, sdc)
  	return output.FLB_OK
 }
 
@@ -50,7 +53,12 @@ func track(s string, startTime time.Time) {
 //export FLBPluginFlushCtx
 func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int {
 
-	//defer track(runningtime("Flush"))
+	defer track(runningtime("Flush"))
+	
+	sdc, ok := output.FLBPluginGetContext(ctx).(*sdClient)
+	if !ok {
+		return output.FLB_ERROR
+	}
 	// Type assert context back into the original type for the Go variable
 	//id := output.FLBPluginGetContext(ctx).(string)
 	//log.Printf("[gostackdriver] Flush called for id: %s", id)
@@ -65,21 +73,20 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 			break
 		}
 
-		// Print record keys and values
-		fmt.Printf("[%03d] Tag:%s TS:%s", count, C.GoString(tag), rec.ts.String())
-		
-		sdent := newEntry(rec)
-
-		j, err := json.Marshal(sdent)
-		if err != nil {
-			fmt.Println("Cannot marshal JSON:", err)
+		if err := sdc.appendEntry(rec); err != nil {
+			log.Println("Error parsing entry: ", err)
+			return output.FLB_RETRY
 		}
-		fmt.Printf(" %s\n", j)
 
 		//TODO - batch by 1000 entries max!
 		count++
 	}
-	fmt.Printf("[gostackdriver] Entries: %d\n", count)
+	if err := sdc.flush(); err != nil {
+		log.Println("Error flushing entries: ", err)
+		return output.FLB_RETRY
+	}
+
+	log.Printf("[gostackdriver] Entries: %d\n", count)
 
 	//TODO - Do SYNC logging , return FLB_RETRY if error
 	//This plugin should not ack uncommited entries

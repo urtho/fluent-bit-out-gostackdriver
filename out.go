@@ -62,7 +62,8 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 
 		if err := sdc.appendEntry(rec); err != nil {
 			log.Println("Error parsing entry: ", err)
-			return output.FLB_RETRY
+			//FIXME
+			//return output.FLB_RETRY
 		}
 
 		//TODO - batch by 1000 entries max!
@@ -70,7 +71,8 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 	}
 	if err := sdc.flush(); err != nil {
 		log.Println("Error flushing entries: ", err)
-		return output.FLB_RETRY
+		//FIXME
+		//return output.FLB_RETRY
 	}
 
 	log.Printf("[gostackdriver] Entries: %d in %s\n", count, time.Now().Sub(startTime))

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"github.com/golang/protobuf/ptypes"
 	structpb "github.com/golang/protobuf/ptypes/struct"
 	json "github.com/json-iterator/go"
@@ -84,19 +85,20 @@ var detectedResource struct {
 func detectGCEResource() *mrpb.MonitoredResource {
 	projectID, err := metadata.ProjectID()
 	if err != nil {
+		log.Printf("Error getting projectID : %s\n", err)
 		return nil
 	}
 	id, err := metadata.InstanceID()
 	if err != nil {
-		return nil
+		log.Printf("Error getting instanceID : %s\n", err)
 	}
 	zone, err := metadata.Zone()
 	if err != nil {
-		return nil
+		log.Printf("Error getting zone : %s\n", err)
 	}
 	name, err := metadata.InstanceName()
 	if err != nil {
-		return nil
+		log.Printf("Error getting instanceName : %s\n", err)
 	}
 	return &mrpb.MonitoredResource{
 		Type: "gce_instance",
@@ -322,7 +324,8 @@ func (r *FLBRecord) parseSeverity(k8sm map[string]interface{}) logtypepb.LogSeve
 }
 
 func init() {
-	detectResource()
+	r := detectResource()
+	log.Printf("[gostackdriver] GCPLabels: %v\n", r.Labels)
 }
 
 // close closes underlying client

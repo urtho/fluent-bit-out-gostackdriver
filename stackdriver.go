@@ -248,12 +248,7 @@ func (c *sdClient) flush() error {
 		Labels:   c.labels,
 		Entries:  c.entries,
 	}
-/*
-	jb, jerr := json.Marshal(req)
-	if jerr == nil {
-		fmt.Println(string(jb))
-	}
-*/
+
 	_, err := c.client.WriteLogEntries(context.Background(), req)
 	c.entries = c.entries[:0]
 	return err
@@ -351,14 +346,10 @@ func (c *sdClient) close() error {
 
 // newSDClient creates new sdClient
 func newSDClient(ctx context.Context, opts ...option.ClientOption) (*sdClient, error) {
-	creds, err := google.FindDefaultCredentials(context.Background(), WriteScope)
-	if err != nil {
-		return nil, err
-	}
 	opts = append([]option.ClientOption{
 		option.WithEndpoint(ProdAddr),
-		option.WithCredentials(creds),
 		option.WithScopes(WriteScope),
+		option.WithUserAgent(fmt.Sprintf("fluent-bit-go/20200114")),
 	}, opts...)
 
 	c, err := vkit.NewClient(ctx, opts...)

@@ -10,6 +10,7 @@ require (
 	github.com/json-iterator/go v1.1.9
 	github.com/ugorji/go v1.1.7
 	github.com/ugorji/go/codec v1.1.7
+	golang.org/x/oauth2 v0.0.0-20191202225959-858c2ad4c8b6
 	google.golang.org/api v0.15.0
 	google.golang.org/genproto v0.0.0-20200108215221-bd8f9a0ef82f
 )

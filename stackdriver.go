@@ -6,14 +6,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"github.com/golang/protobuf/ptypes"
 	structpb "github.com/golang/protobuf/ptypes/struct"
+	"github.com/golang/protobuf/ptypes/timestamp"
 	json "github.com/json-iterator/go"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
 	logtypepb "google.golang.org/genproto/googleapis/logging/type"
 	logpb "google.golang.org/genproto/googleapis/logging/v2"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,7 @@ type sdClient struct {
 	logName  string
 	resource *mrpb.MonitoredResource
 	labels   map[string]string
+	rts      *timestamp.Timestamp
 }
 
 var enumSeverityMap = map[string]logtypepb.LogSeverity{
@@ -188,12 +191,9 @@ func (c *sdClient) appendEntry(rec *FLBRecord) error {
 	}
 	ts, err := ptypes.TimestampProto(rec.ts.Time)
 	if err != nil {
-		ts, err = ptypes.TimestampProto(time.Now())
-		if err != nil {
-			//The Time has ended
-			return nil
-		}
+		ts = ptypes.TimestampNow()
 	}
+
 	rec.cleanUp()
 
 	//FIXME: This sucks ... up the CPU!
@@ -210,12 +210,14 @@ func (c *sdClient) appendEntry(rec *FLBRecord) error {
 	}
 
 	c.entries = append(c.entries, &logpb.LogEntry{
-		Timestamp: ts,
-		Severity:  rec.parseSeverity(k8smap),
-		Trace:     rec.popTrace(),
-		SpanId:    rec.popSpanID(),
-		Payload:   &logpb.LogEntry_JsonPayload{JsonPayload: s},
+		Timestamp:        ts,
+		ReceiveTimestamp: c.rts,
+		Severity:         rec.parseSeverity(k8smap),
+		Trace:            rec.popTrace(),
+		SpanId:           rec.popSpanID(),
+		Payload:          &logpb.LogEntry_JsonPayload{JsonPayload: s},
 	})
+
 	if len(c.entries) >= EntriesMax {
 		return c.flush()
 	}
@@ -224,6 +226,7 @@ func (c *sdClient) appendEntry(rec *FLBRecord) error {
 
 func (c *sdClient) reset(tag string) error {
 	c.entries = c.entries[:0]
+	c.rts = ptypes.TimestampNow()
 	dr := detectResource()
 	projectID, ok := dr.Labels["project_id"]
 	if !ok {
@@ -239,12 +242,19 @@ func (c *sdClient) flush() error {
 	if len(c.entries) == 0 {
 		return nil
 	}
-	_, err := c.client.WriteLogEntries(context.Background(), &logpb.WriteLogEntriesRequest{
+	req := &logpb.WriteLogEntriesRequest{
 		LogName:  c.logName,
 		Resource: c.resource,
 		Labels:   c.labels,
 		Entries:  c.entries,
-	})
+	}
+/*
+	jb, jerr := json.Marshal(req)
+	if jerr == nil {
+		fmt.Println(string(jb))
+	}
+*/
+	_, err := c.client.WriteLogEntries(context.Background(), req)
 	c.entries = c.entries[:0]
 	return err
 }
@@ -341,8 +351,13 @@ func (c *sdClient) close() error {
 
 // newSDClient creates new sdClient
 func newSDClient(ctx context.Context, opts ...option.ClientOption) (*sdClient, error) {
+	creds, err := google.FindDefaultCredentials(context.Background(), WriteScope)
+	if err != nil {
+		return nil, err
+	}
 	opts = append([]option.ClientOption{
 		option.WithEndpoint(ProdAddr),
+		option.WithCredentials(creds),
 		option.WithScopes(WriteScope),
 	}, opts...)
 
@@ -350,8 +365,6 @@ func newSDClient(ctx context.Context, opts ...option.ClientOption) (*sdClient, e
 	if err != nil {
 		return nil, err
 	}
-	//FIXME: this one is "not legal"
-	c.SetGoogleClientInfo("fbitgo", "1")
 	return &sdClient{
 		client:  c,
 		closed:  false,

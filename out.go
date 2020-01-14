@@ -7,6 +7,8 @@ import (
 	"time"	
 	"context"
 	"github.com/fluent/fluent-bit-go/output"
+
+
 )
 
 // FLBPluginRegister is fired upon plugin initialization
@@ -62,17 +64,14 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 
 		if err := sdc.appendEntry(rec); err != nil {
 			log.Println("Error parsing entry: ", err)
-			//FIXME
-			//return output.FLB_RETRY
+			return output.FLB_RETRY
 		}
 
-		//TODO - batch by 1000 entries max!
 		count++
 	}
 	if err := sdc.flush(); err != nil {
 		log.Println("Error flushing entries: ", err)
-		//FIXME
-		//return output.FLB_RETRY
+		return output.FLB_RETRY
 	}
 
 	log.Printf("[gostackdriver] Entries: %d in %s\n", count, time.Now().Sub(startTime))
